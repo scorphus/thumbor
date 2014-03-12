@@ -42,3 +42,16 @@ redis: kill_redis
 
 flake:
 	@flake8 . --ignore=W801,E501
+
+set_engine_graphicsmagick:
+	$(MAKE) set_engine NGN=graphicsmagick
+
+set_engine_opencv:
+	$(MAKE) set_engine NGN=opencv
+
+set_engine_pil:
+	$(MAKE) set_engine NGN=pil
+
+set_engine:
+	@echo "Setting ENGINE to ${NGN}"
+	@sed -i '' "s/^ENGINE = 'thumbor\.engines\.[A-Za-z]*'/ENGINE = 'thumbor.engines.${NGN}'/g" thumbor/thumbor.conf
