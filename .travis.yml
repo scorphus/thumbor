@@ -37,3 +37,9 @@ install:
 script:
     # finally run tests
     - make ci_test
+
+after_failure:
+    - cat /home/travis/.pip/pip.log
+
+after_error:
+    - cat /home/travis/.pip/pip.log
