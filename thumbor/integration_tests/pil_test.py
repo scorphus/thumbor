@@ -1,7 +1,7 @@
-from thumbor.integration_tests import EngineCase
+from thumbor.integration_tests import EngineTestCase
 
 
-class PILTest(EngineCase):
+class PILTest(EngineTestCase):
     engine = 'thumbor.engines.pil'
 
     def test_single_params(self):

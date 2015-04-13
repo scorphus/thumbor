@@ -11,7 +11,7 @@ from thumbor.integration_tests.urls_helpers import single_dataset  # , combined_
 from thumbor.utils import which
 
 
-class EngineCase(AsyncHTTPTestCase):
+class EngineTestCase(AsyncHTTPTestCase):
 
     def get_app(self):
         cfg = Config(SECURITY_KEY='ACME-SEC')
