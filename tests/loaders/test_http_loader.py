@@ -11,9 +11,9 @@
 import time
 from os.path import abspath, join, dirname
 from preggy import expect
-import mock
 from urllib import quote
 # from tornado.concurrent import Future
+import tornado
 import tornado.web
 from tests.base import PythonTestCase, TestCase
 from tornado.concurrent import Future
@@ -75,29 +75,23 @@ class ReturnContentTestCase(PythonTestCase):
 
     def test_return_none_on_error(self):
         response_mock = ResponseMock(error='Error', code=599)
-        callback_mock = mock.Mock()
         ctx = Context(None, None, None)
-        loader.return_contents(response_mock, 'some-url', callback_mock, ctx)
-        result = callback_mock.call_args[0][0]
+        result = loader.return_contents(response_mock, 'some-url', ctx)
         expect(result).to_be_instance_of(LoaderResult)
         expect(result.buffer).to_be_null()
         expect(result.successful).to_be_false()
 
     def test_return_body_if_valid(self):
         response_mock = ResponseMock(body='body', code=200)
-        callback_mock = mock.Mock()
         ctx = Context(None, None, None)
-        loader.return_contents(response_mock, 'some-url', callback_mock, ctx)
-        result = callback_mock.call_args[0][0]
+        result = loader.return_contents(response_mock, 'some-url', ctx)
         expect(result).to_be_instance_of(LoaderResult)
         expect(result.buffer).to_equal('body')
 
     def test_return_upstream_error_on_body_none(self):
         response_mock = ResponseMock(body=None, code=200)
-        callback_mock = mock.Mock()
         ctx = Context(None, None, None)
-        loader.return_contents(response_mock, 'some-url', callback_mock, ctx)
-        result = callback_mock.call_args[0][0]
+        result = loader.return_contents(response_mock, 'some-url', ctx)
         expect(result).to_be_instance_of(LoaderResult)
         expect(result.buffer).to_be_null()
         expect(result.successful).to_be_false()
@@ -105,10 +99,8 @@ class ReturnContentTestCase(PythonTestCase):
 
     def test_return_upstream_error_on_body_empty(self):
         response_mock = ResponseMock(body='', code=200)
-        callback_mock = mock.Mock()
         ctx = Context(None, None, None)
-        loader.return_contents(response_mock, 'some-url', callback_mock, ctx)
-        result = callback_mock.call_args[0][0]
+        result = loader.return_contents(response_mock, 'some-url', ctx)
         expect(result).to_be_instance_of(LoaderResult)
         expect(result.buffer).to_be_null()
         expect(result.successful).to_be_false()
@@ -191,34 +183,34 @@ class HttpLoaderTestCase(TestCase):
         # wrong) implementation
         tornado.httpclient.AsyncHTTPClient().close()
 
+    @tornado.testing.gen_test
     def test_load_with_callback(self):
         url = self.get_url('/')
         config = Config()
         ctx = Context(None, config, None)
 
-        loader.load(ctx, url, self.stop)
-        result = self.wait()
+        result = yield loader.load(ctx, url)
         expect(result).to_be_instance_of(LoaderResult)
         expect(result.buffer).to_equal('Hello')
         expect(result.successful).to_be_true()
 
+    @tornado.testing.gen_test
     def test_load_with_utf8_url(self):
         url = self.get_url(quote(u'/maracujá.jpg'.encode('utf-8')))
         config = Config()
         ctx = Context(None, config, None)
 
         with expect.error_not_to_happen(UnicodeDecodeError):
-            loader.load(ctx, url, self.stop)
-            self.wait()
+            yield loader.load(ctx, url)
 
+    @tornado.testing.gen_test
     def test_load_with_curl(self):
         url = self.get_url('/')
         config = Config()
         config.HTTP_LOADER_CURL_ASYNC_HTTP_CLIENT = True
         ctx = Context(None, config, None)
 
-        loader.load(ctx, url, self.stop)
-        result = self.wait()
+        result = yield loader.load(ctx, url)
         expect(result).to_be_instance_of(LoaderResult)
         expect(result.buffer).to_equal('Hello')
         expect(result.successful).to_be_true()
@@ -241,17 +233,19 @@ class HttpLoaderWithUserAgentForwardingTestCase(TestCase):
 
         return application
 
+    @tornado.testing.gen_test
     def test_load_with_user_agent(self):
         url = self.get_url('/')
         config = Config()
         config.HTTP_LOADER_FORWARD_USER_AGENT = True
         ctx = Context(None, config, None, HandlerMock({"User-Agent": "test-user-agent"}))
 
-        loader.load(ctx, url, self.stop)
-        result = self.wait()
+        result = yield loader.load(ctx, url)
+        # result = self.wait()
         expect(result).to_be_instance_of(LoaderResult)
         expect(result.buffer).to_equal('test-user-agent')
 
+    @tornado.testing.gen_test
     def test_load_with_default_user_agent(self):
         url = self.get_url('/')
         config = Config()
@@ -259,8 +253,8 @@ class HttpLoaderWithUserAgentForwardingTestCase(TestCase):
         config.HTTP_LOADER_DEFAULT_USER_AGENT = "DEFAULT_USER_AGENT"
         ctx = Context(None, config, None, HandlerMock({}))
 
-        loader.load(ctx, url, self.stop)
-        result = self.wait()
+        result = yield loader.load(ctx, url)
+        # result = self.wait()
         expect(result).to_be_instance_of(LoaderResult)
         expect(result.buffer).to_equal('DEFAULT_USER_AGENT')
 
@@ -284,6 +278,7 @@ class HttpCurlTimeoutLoaderTestCase(TestCase):
         # wrong) implementation
         tornado.httpclient.AsyncHTTPClient().close()
 
+    @tornado.testing.gen_test
     def test_load_with_timeout(self):
         url = self.get_url('/')
         config = Config()
@@ -291,12 +286,13 @@ class HttpCurlTimeoutLoaderTestCase(TestCase):
         config.HTTP_LOADER_REQUEST_TIMEOUT = 1
         ctx = Context(None, config, None)
 
-        loader.load(ctx, url, self.stop)
+        yield loader.load(ctx, url)
         result = self.wait()
         expect(result).to_be_instance_of(LoaderResult)
         expect(result.buffer).to_be_null()
         expect(result.successful).to_be_false()
 
+    @tornado.testing.gen_test
     def test_load_with_speed_timeout(self):
         url = self.get_url('/')
         config = Config()
@@ -305,7 +301,7 @@ class HttpCurlTimeoutLoaderTestCase(TestCase):
         config.HTTP_LOADER_CURL_LOW_SPEED_LIMIT = 1000000000000
         ctx = Context(None, config, None)
 
-        loader.load(ctx, url, self.stop)
+        yield loader.load(ctx, url)
         result = self.wait()
         expect(result).to_be_instance_of(LoaderResult)
         expect(result.buffer).to_be_null()
@@ -331,6 +327,7 @@ class HttpTimeoutLoaderTestCase(TestCase):
         # wrong) implementation
         tornado.httpclient.AsyncHTTPClient().close()
 
+    @tornado.testing.gen_test
     def test_load_without_curl_but_speed_timeout(self):
         url = self.get_url('/')
         config = Config()
@@ -338,7 +335,7 @@ class HttpTimeoutLoaderTestCase(TestCase):
         config.HTTP_LOADER_CURL_LOW_SPEED_LIMIT = 1000000000000
         ctx = Context(None, config, None)
 
-        loader.load(ctx, url, self.stop)
+        yield loader.load(ctx, url)
         result = self.wait()
         expect(result).to_be_instance_of(LoaderResult)
         expect(result.buffer).to_equal('Hello')
