@@ -94,8 +94,6 @@ class Filter(BaseFilter):
                 y = j * space_y + j * watermark_sz[1]
                 self.engine.paste(self.watermark_engine, (x, y), merge=True)
 
-        self.callback()
-
     def on_fetch_done(self, result):
         if not result.successful:
             logger.warn(
@@ -113,6 +111,7 @@ class Filter(BaseFilter):
         self.storage.put_crypto(self.url)
         self.on_image_ready(buffer)
 
+    @tornado.gen.coroutine
     @filter_method(
         BaseFilter.String,
         r'(?:-?\d+)|center|repeat',
@@ -120,19 +119,18 @@ class Filter(BaseFilter):
         BaseFilter.PositiveNumber,
         async=True
     )
-    @tornado.gen.coroutine
-    def watermark(self, callback, url, x, y, alpha):
+    def watermark(self, url, x, y, alpha):
         self.url = url
         self.x = x
         self.y = y
         self.alpha = alpha
-        self.callback = callback
         self.extension = splitext(self.url)[-1].lower()
         self.watermark_engine = self.context.modules.engine.__class__(self.context)
         self.storage = self.context.modules.storage
 
-        buffer = yield tornado.gen.maybe_future(self.storage.get(self.url))
+        buffer = yield self.storage.get(self.url)
         if buffer is not None:
             self.on_image_ready(buffer)
         else:
-            self.context.modules.loader.load(self.context, self.url, self.on_fetch_done)
+            result = yield self.context.modules.loader.load(self.context, self.url)
+            self.on_fetch_done(result)

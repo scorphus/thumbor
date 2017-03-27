@@ -10,6 +10,7 @@
 
 import re
 import collections
+import tornado
 
 STRIP_QUOTE = re.compile(r"^'(.+)'$")
 PHASE_POST_TRANSFORM = 'post_transform'
@@ -75,20 +76,21 @@ class FiltersRunner:
     def __init__(self, filter_instances):
         self.filter_instances = filter_instances
 
-    def apply_filters(self, phase, callback):
+    @tornado.gen.coroutine
+    def apply_filters(self, phase):
         filters = self.filter_instances.get(phase, None)
         if not filters:
-            callback()
-            return
+            raise tornado.gen.Return(None)
 
+        @tornado.gen.coroutine
         def exec_one_filter():
             if len(filters) == 0:
-                callback()
-                return
+                raise tornado.gen.Return(None)
 
             f = filters.pop(0)
-            f.run(exec_one_filter)
-        exec_one_filter()
+            yield f.run()
+
+        yield exec_one_filter()
 
 
 class BaseFilter(object):
@@ -166,16 +168,8 @@ class BaseFilter(object):
         self.context = context
         self.engine = context.modules.engine if context and context.modules else None
 
-    def create_multi_engine_callback(self, callback, engines_count):
-        self.engines_count = engines_count
-
-        def single_callback(*args):
-            self.engines_count -= 1
-            if self.engines_count == 0:
-                callback(*args)
-        return single_callback
-
-    def run(self, callback=None):
+    @tornado.gen.coroutine
+    def run(self):
         if self.params is None:
             return
 
@@ -188,16 +182,11 @@ class BaseFilter(object):
             engines_to_run = [None]
 
         results = []
-        if self.async_filter:
-            callback = self.create_multi_engine_callback(callback, len(engines_to_run))
         for engine in engines_to_run:
             self.engine = engine
             if self.async_filter:
-                self.runnable_method(callback, *self.params)
+                yield self.runnable_method(*self.params)
             else:
                 results.append(self.runnable_method(*self.params))
 
-        if (not self.async_filter) and callback:
-            callback()
-
-        return results
+        raise tornado.gen.Return(results)
