@@ -131,37 +131,42 @@ class Picture:
         self.buffer = buffer
         self.fetched = True
 
+    @tornado.gen.coroutine
     def request(self):
+        result = None
         try:
-            self.thumbor_filter.context.modules.loader.load(
-                self.thumbor_filter.context, self.url, self.on_fetch_done)
+            result = yield self.thumbor_filter.context.modules.loader.load(
+                self.thumbor_filter.context, self.url)
+        except Exception as err:
+            self.failed = True
+            logger.exception(err)
+        raise tornado.gen.Return(result)
+
+    @tornado.gen.coroutine
+    def save_on_disc(self):
+        if not self.fetched:
+            self.failed = True
+            logger.error("filters.distributed_collage: Can't save unfetched image")
+            raise tornado.gen.Return(None)
+
+        try:
+            self.engine.load(self.buffer, self.extension)
         except Exception as err:
             self.failed = True
             logger.exception(err)
 
-    def save_on_disc(self):
-        if self.fetched:
-            try:
-                self.engine.load(self.buffer, self.extension)
-            except Exception as err:
-                self.failed = True
-                logger.exception(err)
-
-            try:
-                self.thumbor_filter.storage.put(self.url, self.engine.read())
-                self.thumbor_filter.storage.put_crypto(self.url)
-            except Exception as err:
-                self.failed = True
-                logger.exception(err)
-        else:
+        try:
+            self.thumbor_filter.storage.put(self.url, self.engine.read())
+            self.thumbor_filter.storage.put_crypto(self.url)
+        except Exception as err:
             self.failed = True
-            logger.error("filters.distributed_collage: Can't save unfetched image")
+            logger.exception(err)
 
+    @tornado.gen.coroutine
     def on_fetch_done(self, result):
         # TODO if result.successful is False how can the error be handled?
         self.fill_buffer(result.buffer if isinstance(result, LoaderResult) else result)
-        self.save_on_disc()
-        self.thumbor_filter.on_image_fetch()
+        yield self.save_on_disc()
 
     def resize_focal_points(self, focal_points, ratio):
         for fp in focal_points:
@@ -195,11 +200,9 @@ class Filter(BaseFilter):
 
     @filter_method(r'horizontal', r'smart', r'[^\)]+', async=True)
     @tornado.gen.coroutine
-    def distributed_collage(self, callback, orientation, alignment, urls):
+    def distributed_collage(self, orientation, alignment, urls):
         logger.debug('filters.distributed_collage: distributed_collage invoked')
         self.storage = self.context.modules.storage
-
-        self.callback = callback
         self.orientation = orientation
         self.alignment = alignment
         self.urls = urls.split('|')
@@ -208,10 +211,10 @@ class Filter(BaseFilter):
         total = len(self.urls)
         if total > self.MAX_IMAGES:
             logger.error('filters.distributed_collage: Too many images to join')
-            callback()
+            raise tornado.gen.Return(None)
         elif total == 0:
             logger.error('filters.distributed_collage: No images to join')
-            callback()
+            raise tornado.gen.Return(None)
         else:
             self.urls = self.urls[:self.MAX_IMAGES]
             for url in self.urls:
@@ -221,13 +224,14 @@ class Filter(BaseFilter):
             # otherwise, self.on_image_fetch can call the self.assembly()
             # without that all images had being loaded
             for url in self.urls:
-                buffer = yield tornado.gen.maybe_future(self.storage.get(url))
+                buffer = yield self.storage.get(url)
                 pic = self.images[url]
                 if buffer is not None:
                     pic.fill_buffer(buffer)
-                    self.on_image_fetch()
                 else:
-                    pic.request()
+                    result = yield pic.request()
+                    yield pic.on_fetch_done(result)
+                self.on_image_fetch()
 
     def is_all_fetched(self):
         return all([self.images[url].fetched for url in self.images])
@@ -242,9 +246,8 @@ class Filter(BaseFilter):
             logger.exception(err)
 
     def on_image_fetch(self):
-        if (self.is_any_failed()):
+        if self.is_any_failed():
             logger.error('filters.distributed_collage: Some images failed')
-            self.callback()
         elif self.is_all_fetched():
             self.assembly()
 
@@ -280,4 +283,3 @@ class Filter(BaseFilter):
 
         self.engine.image = canvas.image
         logger.debug('filters.distributed_collage: assembly finished')
-        self.callback()
