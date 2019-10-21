@@ -22,10 +22,14 @@ try:
 except ImportError:
     METADATA_AVAILABLE = False
 
+import math
 import re
+from six.moves import range
 
+from thumbor.ext.filters import _convolution
 from thumbor.utils import logger, EXTENSION
 
+MAX_BLUR_RADIUS = 150
 WEBP_SIDE_LIMIT = 16383
 
 SVG_RE = re.compile(r'<svg\s[^>]*([\"\'])http[^\"\']*svg[^\"\']*', re.I)
@@ -297,6 +301,27 @@ class BaseEngine(object):
                 except Exception as e:
                     msg = """[piexif] %s""" % e
                     logger.error(msg)
+
+    def _generate_1d_matrix(self, sigma, radius):
+        matrix_size = (radius * 2) + 1
+        matrix = []
+        two_sigma_squared = float(2 * sigma * sigma)
+        for x in range(matrix_size):
+            adj_x = x - radius
+            exp = math.e ** -(((adj_x * adj_x)) / two_sigma_squared)
+            matrix.append(exp / math.sqrt(two_sigma_squared * math.pi))
+        return tuple(matrix), matrix_size
+
+    def blur(self, radius, sigma=0):
+        if sigma == 0:
+            sigma = radius
+        if radius > MAX_BLUR_RADIUS:
+            radius = MAX_BLUR_RADIUS
+        matrix, matrix_size = self._generate_1d_matrix(sigma, radius)
+        mode, data = self.image_data_as_rgb()
+        imgdata = _convolution.apply(mode, data, self.size[0], self.size[1], matrix, matrix_size, True)
+        imgdata = _convolution.apply(mode, imgdata, self.size[0], self.size[1], matrix, 1, True)
+        self.set_image_data(imgdata)
 
     def gen_image(self, size, color):
         raise NotImplementedError()
